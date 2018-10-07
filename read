@@ -1,0 +1,3 @@
+#!/bin/sh
+avrdude -p m128 -P /dev/rfcomm0 -c stk500v2 -U flash:r:dump.bin:r
+#http://www.avislab.com/blog/avrdude/

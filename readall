@@ -1,0 +1,14 @@
+#!/bin/sh
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -reeprom  reeprom.bin
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -rram  ram.bin
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 200 -nreg 120 -rregf hmi_vars.bin
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 300 -nreg 120 -rregf tconv.bin
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -rdiscs  >> ppch_state1.txt
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -rireg -riregf ppch_state2.bin
+
+#скорость записи на 0 для остановки записи во время сохранения
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 367 -nreg 1 -wreg 1024
+
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 4096 -nreg 12801 -riregf fpga_ram.bin
+#восстановить  скорость записи
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 367 -nreg 1 -wreg 624

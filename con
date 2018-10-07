@@ -1,0 +1,4 @@
+#!/bin/sh
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 233 -nreg 1 -wreg 2
+sudo minicom
+

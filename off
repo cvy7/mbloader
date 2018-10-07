@@ -1,0 +1,15 @@
+#!/bin/sh
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 17 -nreg 7 -wcoils 1 0 1 0 0 0 1
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -rdiscs
+echo "a d r r t d - w k h - - - - - - e s r h r r n m "
+echo "v i e e e o   a n e             r w e e e e o e "
+echo "o s a s m o   t o a             r . a a g g t s "
+echo "s t d e p r   e p t               o d t _ _ _ t "
+echo "t   y t . s   r k                 n y   u i i n "
+echo "  u     b       a                     o o o n o "
+echo "  p     k                             n     _ e "
+echo "  r                                         L Y "
+./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 16 -nreg 8 -rireg
+echo "P      uou   fou   iou   id    ud    err   tmax"
+
+
