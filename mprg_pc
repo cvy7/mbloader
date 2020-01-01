@@ -1,0 +1,3 @@
+#!/bin/sh
+#sudo ./mbloader -d /dev/ttyS4 -echo -b 38400 -a 115 -m 11 -p svz.bin
+sudo ./mbloader -d /dev/ttyS4 -b 38400 -a 115 -m 11 -p svz.bin

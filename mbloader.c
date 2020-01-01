@@ -38,20 +38,21 @@
 #define WREG         2
 #define RREG         4
 #define PFPGA        8
-#define RFPGA       16
-#define VFPGA       32
-#define PEEPROM     64
-#define REEPROM    128
-#define VEEPROM    256
-#define RRAM       512
-#define RREGF     1024
-#define WREGF     2048
-#define RIREG     4096
-#define RIREGF    8192
-#define RCOILS   16384
-#define WCOILS   32768
-#define RDISCS   65536
-#define WREG1    0x20000
+#define RFPGA       0x10
+#define VFPGA       0x20
+#define PEEPROM     0x40
+#define REEPROM     0x80
+#define VEEPROM     0x100
+#define RRAM        0x200
+#define RREGF       0x400
+#define WREGF       0x800
+#define RIREG       0x1000
+#define RIREGF      0x2000
+#define RCOILS      0x4000
+#define WCOILS      0x8000
+#define RDISCS      0x10000L
+#define PROGRAM88   0x20000L
+#define WREG1       0x40000L
 
 //#define ACK     0x06
 //#define NACK    0x15
@@ -306,7 +307,7 @@ int readhex (FILE           *fp,
 /**
  * Read a hexfile
  */
-char * read_hexfile(const char * filename, unsigned long * lastaddr)
+char * read_hexfile(const char * filename, uint32_t * lastaddr)
 {
     char    *data;
     FILE    *fp;
@@ -574,7 +575,9 @@ u_int16_t crc;
 int i;
 mb_state=MB_STATE_TX;
 
- for(;;) switch(mb_state){
+ for(;;){
+     fprintf(stderr,"state==%d==",mb_state);
+     switch(mb_state){
     default://MB_STATE_TX
     buff=mb_buff;
     *buff++=mb_addr;
@@ -589,8 +592,36 @@ mb_state=MB_STATE_TX;
     crc=mbcrc(mb_buff,(7+nbytesc));
     //crc=usMBCRC16(mb_buff,(7+nbytesc));
     *buff++=crc&0xff;
-    *buff=(crc>>8)&0xff;
-    int n = write(fd, mb_buff, (7+nbytesc+2));
+    *buff++=(crc>>8)&0xff;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff++=0;
+    *buff=0;
+    //**************************************************
+    //DBG
+    //fputs("Time150us_pre_write\n", stderr);
+    //usleep(150UL);
+    //**************************************************
+    int n;
+    com_drain(fd);
+   n = write(fd, mb_buff, (7+nbytesc+2+5));
+    com_drain(fd);
+   /* char *pc=mb_buff;
+    for(n=0; n<(7+nbytesc+2);n++){
+      com_putc(fd, *pc);
+      pc++;
+    }*/
+    //**************************************************
+    //DBG
+    //fputs("Time150us_post_write\n", stderr);
+    //usleep(150UL);
+    //**************************************************
     if(rs232_echo){
     int timeout=(1000000UL/baud)*12*(7+nbytesc+2)+1500;
     usleep(timeout);
@@ -680,6 +711,7 @@ mb_state=MB_STATE_TX;
      return 0;
 
  }
+}
 
 }
 //********************************************************************************************************************
@@ -747,7 +779,7 @@ int programflash (int           fd,
         }
         if(debug) {
             fputs("\n",stderr);
-            debug=0;
+            //debug=0;
         }
         fprintf(stderr,"%x\r",adr);
         //}
@@ -772,6 +804,7 @@ void usage()
     printf("-m    mb_addres of main programm\n");
     printf("-echo  flush rs232 echo         \n");
     printf("Programm mk       : ./mbloader -d /dev/ttyS0 -b 115200 -a 102 -m 12 -p mk_su2.bin \n");
+    printf("Programm mega88   : ./mbloader -d /dev/ttyS0 -b 115200 -a 102 -m 12 -p88 mk_su2.bin \n");
     printf("Programm fpga conf: ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -pfpga -vfpga output_file.rpd \n");
     printf("Read fpga conf fl.: ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -rfpga  rfpga.bin \n");
     printf("Programm mk eeprom: ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -peeprom -veeprom eeprom.bin \n");
@@ -861,13 +894,8 @@ int connect_device ( int fd,
     return 0;
 }//void connect_device()
 
-
-
-
-
-
 int prog_verify (int            fd,
-                 int            mode,
+                 uint32_t       mode,
                  int            baud,
                  int            block_size,
                  const char     *password,
@@ -878,7 +906,7 @@ int prog_verify (int            fd,
 
 
     // last address in hexfile
-    unsigned long last_addr = 0;
+    uint32_t last_addr = 0;
     int rc;
 
 
@@ -938,7 +966,167 @@ int prog_verify (int            fd,
     }
     return 0;
 }
+//*****************************************************************************************************************
+/**
+ * Flashes the controller atmega88
+ */
+int boot_waiting_for_activity(const char *device,int baudid){
+    int fd;
+    struct tms  timestruct;
+    clock_t     start_time;       //time
 
+    start_time = times (&timestruct);
+    fd = com_open(device, baudrates[baudid].constval);
+    if (fd < 0)
+    {
+        printf("\nOpening com port \"%s\" failed (%s)!\n",
+               device, strerror (errno));
+        return -1;
+    }
+    fprintf(stderr,"Testing bootloader activated...");
+    int i=com_getc(fd,TIMEOUTP);
+    fprintf(stderr,"com_getc=0x%02X:\n",i);
+    com_close(fd);
+    if (i==mb_addr_boot) { // уже активирован и кидается своим адресом
+     fprintf(stderr,"Bootloader  activated!\n");
+     return 1;
+    }
+    else if (i!=-1){ // какой то другой пакет?
+      fprintf(stderr,"Error boot_device_address!\n");
+      return -1;
+    }
+    return 0;
+}
+
+int write_page88(const char *device,int baud,int baudid,int mb_addr_boot,int adr,uint8_t *data,int len){
+    int rc;
+    uint8_t data2[64];
+if(len%2) len++;
+if(len>64){
+    printf("\nwrite_page88:len>64!\n");
+    return -1;
+}
+for(int j=0;j<len;j+=2){
+   data2[j]=data[j+1];
+   data2[j+1]=data[j];
+}
+len/=2;
+adr/=2;
+for(int i=0;i<3;i++){
+    rc=mb_write_regs(adr,len,(uint16_t *)data2);
+   if(rc>=0) return rc;
+    rc=boot_waiting_for_activity(device,baudid);
+    if(rc<1){
+       printf("\nwrite_page88:boot_waiting_for_activity(device,baudid); failed!\n");
+       return -1;
+    }
+    rc=mb_open_master(device, baud);
+    if(rc < 0) {
+        printf("\nwrite_page88:mb_open_master(device, baud); failed!\n");
+        return rc;
+    }
+    rc=mb_slave_addr(mb_addr_boot);
+    if(rc < 0) {
+        printf("\nwrite_page88:mb_slave_addr(mb_addr_boot); failed!\n");
+        return rc;
+    }
+}
+}
+
+int prog_verify88 (
+                 int            baud,
+                 int            baudid,
+                 const char     *device,
+                 const char     *hexfile)
+{
+    uint8_t    *data = NULL;
+    int         adr=0;
+    int         actCode=0xdede;
+    uint16_t    actmb_reg=254;
+    // last address in hexfile
+    uint32_t    last_addr = 0;
+    int         page_len=64;
+    int         dop_page=0;
+    uint16_t    dop_data=0xffff;
+    int         rc;
+    printf ("Program atmega88\n");
+    printf("Port           : %s\n", device);
+    printf("Baudrate       : %d\n", baud);
+    printf("Mb address main: %d\n", mb_addr);
+    printf("Mb address boot: %d\n", mb_addr_boot);
+    printf("File           : %s\n", hexfile);
+    // read the file
+    data = read_hexfile (hexfile, &last_addr);
+    if (data == NULL){
+        printf ("ERROR: no buffer allocated and filled, exiting!\n");
+        return -1;
+    }
+    printf("Size          : %ld Bytes\n", last_addr);
+    printf("-------------------------------------------------\n");
+    rc=boot_waiting_for_activity(device,baudid);
+    if(rc<0){
+        printf("\nprog_verify88:0:boot_waiting_for_activity(device,baudid); failed!\n");
+        return -1;
+    }
+    if(!rc){//Активируем бутлоадер
+        rc=mb_open_master(device, baud);
+        if(rc < 0) {
+            printf("\nprog_verify88:mb_open_master(device, baud); failed!\n");
+            return rc;
+        }
+        rc=mb_slave_addr(mb_addr);
+        if(rc < 0) {
+            printf("\nprog_verify88:mb_slave_addr(mb_addr); failed!\n");
+            return rc;
+        }
+        rc=mb_write_regs(actmb_reg, 1,&actCode);
+        if(rc < 0) {
+            printf("\nprog_verify88:mb_write_regs(actmb_reg, 1,&actCode); failed!\n");
+            return rc;
+        }
+        mb_close();
+        rc=boot_waiting_for_activity(device,baudid);
+        if(rc<0){
+            printf("\nprog_verify88:1:boot_waiting_for_activity(device,baudid) failed!\n");
+            return -1;
+        }
+    }
+    rc=mb_open_master(device, baud);
+    if(rc < 0) {
+        printf("\nprog_verify88:mb_open_master(device, baud); failed!\n");
+        return rc;
+    }
+    rc=mb_slave_addr(mb_addr_boot);
+    if(rc < 0) {
+        printf("\nprog_verify88:mb_slave_addr(mb_addr_boot); failed!\n");
+        return rc;
+    }
+    for(adr=0;adr<=last_addr;adr+=page_len){
+       int len=last_addr-adr;
+       if     (len==page_len) dop_page=1;//Признаком конца записи для бутлоадера является неполная страница.
+       //Если так совпало, что прошивка имеет динну ровно страниц то добавляется 1 страница из 2 байт 0xff
+       //Минусом метода является то, что нельзя использовать последние 2 байта памяти.
+       else if(len> page_len) len =page_len;
+       rc=write_page88(device,baud,baudid,mb_addr_boot,adr,data,len);
+       data+=len;
+       if(rc < 0) {
+           printf("\nprog_verify88:write_page88(device,baud,baudid,mb_addr_boot,adr,data,len); failed!\n");
+           return rc;
+       }
+       if(dop_page){
+           rc=write_page88(device,baud,baudid,mb_addr_boot,(adr+page_len),&dop_data,2);
+           if(rc < 0) {
+               printf("\nprog_verify88:write_page88(device,baud,baudid,mb_addr_boot,(adr+page_len),(char*)&dop_data,2); failed!\n");
+               return rc;
+           }
+       }
+    }
+    mb_close();
+    printf("\n ++++++++++ Device successfully programmed! ++++++++++\n\n");
+    printf("...starting application\n\n");
+    return 0;
+
+}
 
 int mb_open_master(char *device, int baud){
 
@@ -1091,15 +1279,19 @@ return rc;
 }
 
 void mb_close(){
+    if(ctx){
     modbus_close(ctx);
     modbus_free(ctx);
     printf("MODBUS connection closed\n");
+    }
+    else
+        printf("ctx==0!\n");
 }
 
 //*******************************************************************************************************
 //
 int prog_eeprom   (int            fd,
-                 int            mode,
+                 uint32_t         mode,
                  int            baud,
                  int            block_size,
                  const char     *password,
@@ -1111,7 +1303,7 @@ int prog_eeprom   (int            fd,
     char read_buffer[256];
     FILE * fp;
     // last address in hexfile
-    unsigned long adr,last_addr = 0;
+    uint32_t adr,last_addr = 0;
     uint16_t cmd[2];
     int i,j;
     int rc;
@@ -1140,8 +1332,8 @@ int prog_eeprom   (int            fd,
 
                 rc=mb_write_regs(adr/2+0x1000,    64, (uint16_t *) &data[0]);
                 if(rc < 0) return rc;
-                rc=modbus_set_debug(ctx, FALSE);
-                if(rc < 0) return rc;
+                //rc=modbus_set_debug(ctx, FALSE);
+                //if(rc < 0) return rc;
                 rc=mb_write_regs(adr/2+0x1000+64, 64, (uint16_t *) &data[128]);
                 if(rc < 0) return rc;
                 data+=256;
@@ -1169,8 +1361,8 @@ int prog_eeprom   (int            fd,
 
             rc=mb_read_regs(adr/2+0x1000,    64, (uint16_t *) &read_buffer[0]);
             if(rc < 0) return rc;
-            rc=modbus_set_debug(ctx, FALSE);
-            if(rc < 0) return rc;
+            //rc=modbus_set_debug(ctx, FALSE);
+            //if(rc < 0) return rc;
             rc=mb_read_regs(adr/2+0x1000+64, 64, (uint16_t *) &read_buffer[128]);
             if(rc < 0) return rc;
             char *pread_buffer=read_buffer;
@@ -1205,8 +1397,8 @@ int prog_eeprom   (int            fd,
 
             rc=mb_read_regs(adr/2+0x1000,    64, (uint16_t *) &read_buffer[0]);
             if(rc < 0) return rc;
-            rc=modbus_set_debug(ctx, FALSE);
-            if(rc < 0) return rc;
+            //rc=modbus_set_debug(ctx, FALSE);
+            //if(rc < 0) return rc;
             rc=mb_read_regs(adr/2+0x1000+64, 64, (uint16_t *) &read_buffer[128]);
             if(rc < 0) return rc;
             fwrite (read_buffer , sizeof(char), sizeof(read_buffer), fp);
@@ -1234,7 +1426,7 @@ int prog_eeprom   (int            fd,
 
             rc=mb_read_regs(adr/2+0x2000,    64, (uint16_t *) &read_buffer[0]);
             if(rc < 0) return rc;
-            rc=modbus_set_debug(ctx, FALSE);
+            //rc=modbus_set_debug(ctx, FALSE);
             if(rc < 0) return rc;
             rc=mb_read_regs(adr/2+0x2000+64, 64, (uint16_t *) &read_buffer[128]);
             if(rc < 0) return rc;
@@ -1252,7 +1444,7 @@ int prog_eeprom   (int            fd,
 
 //*******************************************************************************************************
 int prog_fpga   (int            fd,
-                 int            mode,
+                 uint32_t       mode,
                  int            baud,
                  int            block_size,
                  const char     *password,
@@ -1264,7 +1456,7 @@ int prog_fpga   (int            fd,
     char read_buffer[256];
     FILE * fp;
     // last address in hexfile
-    unsigned long adr,last_addr = 0;
+    uint32_t adr,last_addr = 0;
     uint16_t cmd[2];
     int i,j;
     int rc;
@@ -1349,8 +1541,8 @@ if (mode & (PFPGA))
                         if(rc < 0) return rc;
                         if(!cmd[0]) break;
                     }
-                    rc=modbus_set_debug(ctx, FALSE);
-                    if(rc < 0) return rc;
+                    //rc=modbus_set_debug(ctx, FALSE);
+                    //if(rc < 0) return rc;
                     fprintf(stderr,"%x\r",cmd[1]);
                 }
 
@@ -1383,8 +1575,8 @@ for(cmd[1]=0; cmd[1]<NPAGES; cmd[1]++){
         if(rc < 0) return rc;
         if(!cmd[0]) break;
     }
-    rc=modbus_set_debug(ctx, FALSE);
-    if(rc < 0) return rc;
+    //rc=modbus_set_debug(ctx, FALSE);
+    //if(rc < 0) return rc;
     rc=mb_read_regs(VAR_DATA_REGISTER, 64, (uint16_t *) &read_buffer[0]);
     if(rc < 0) return rc;
     rc=mb_read_regs(VAR_DATA_REGISTER+64, 64, (uint16_t *) &read_buffer[128]);
@@ -1427,8 +1619,8 @@ for(cmd[1]=0; cmd[1]<NPAGES; cmd[1]++){
         if(rc < 0) return rc;
         if(!cmd[0]) break;
     }
-    rc=modbus_set_debug(ctx, FALSE);
-    if(rc < 0) return rc;
+    //rc=modbus_set_debug(ctx, FALSE);
+    //if(rc < 0) return rc;
     rc=mb_read_regs(VAR_DATA_REGISTER, 64, (uint16_t *) &read_buffer[0]);
     if(rc < 0) return rc;
     rc=mb_read_regs(VAR_DATA_REGISTER+64, 64, (uint16_t *) &read_buffer[128]);
@@ -1445,7 +1637,7 @@ for(cmd[1]=0; cmd[1]<NPAGES; cmd[1]++){
 }
 //************************************MODBUS_REGS******************************************************
 int prog_mb_regs(int            fd,
-                 int            mode,
+                 uint32_t       mode,
                  int            baud,
                  int            block_size,
                  const char     *password,
@@ -1457,7 +1649,7 @@ int prog_mb_regs(int            fd,
     char read_buffer[256];
     FILE * fp;
     // last address in hexfile
-    unsigned long adr,last_addr = 0;
+    uint32_t adr,last_addr = 0;
     uint16_t cmd[2];
     int i,j;
     int rc;
@@ -1615,8 +1807,8 @@ int prog_mb_regs(int            fd,
         rc=mb_read_input_regs(areg, regs2, (uint16_t *) read_buffer);
         if(rc < 0) {if(fp)fclose(fp);return rc;}
 
-        rc=modbus_set_debug(ctx, FALSE);
-        if(rc < 0) return rc;
+        //rc=modbus_set_debug(ctx, FALSE);
+        //if(rc < 0) return rc;
 
         fwrite (read_buffer , sizeof(char), regs2*2, fp);
         fprintf(stderr,"%x\r",mb_areg);
@@ -1637,7 +1829,7 @@ int prog_mb_regs(int            fd,
 int main(int argc, char *argv[])
 {
     int     fd = 0;
-    int     mode = 0;
+    uint32_t     mode = 0;
 
     // default values
     int baudid = -1;
@@ -1799,6 +1991,10 @@ int main(int argc, char *argv[])
         {
             mode |= PROGRAM;
         }
+        else if (strcmp (argv[i], "-p88") == 0)
+        {
+            mode |= PROGRAM88;
+        }
    //*********************************FPGA********************
         else if (strcmp (argv[i], "-pfpga") == 0)
         {
@@ -1890,6 +2086,11 @@ int main(int argc, char *argv[])
         prog_verify (fd, mode, baud, bsize, password, device, hexfile);
 
         com_close(fd);                //close open com port
+    }
+
+    if (mode & PROGRAM88 ){
+        rc=prog_verify88 (baud,baudid,device,hexfile);
+        return rc;
     }
 
     if (mode & (WREG | RREG | RIREG | RREGF  | RIREGF | WREGF | WREG1 | RCOILS | WCOILS | RDISCS ) ){
