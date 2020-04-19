@@ -56,6 +56,65 @@ uint8_t dec_to_ASCII_HEX(uint8_t decChar){
     return decChar;
 }
 
+// Conversion from unsigned char
+//            to manchester unsigned int .
+/*void  char_to_manc(uint8_t *inp, uint8_t * outp_d){
+    uint16_t outp=0,inp2=*inp;
+    outp=((inp2 & (1<<7))<<7) |
+         ((inp2 & (1<<6))<<6) |
+         ((inp2 & (1<<5))<<5) |
+         ((inp2 & (1<<4))<<4) |
+         ((inp2 & (1<<3))<<3) |
+         ((inp2 & (1<<2))<<2) |
+         ((inp2 & (1<<1))<<1) |
+          (inp2 & 1);
+    outp|=~(outp<<1) & 0xaaaa;
+    *outp_d++=outp & 0xff;
+    *outp_d  =outp >>8;
+}*/
+void  char_to_manc(uint8_t *inp, uint8_t * outp_d){
+    uint16_t outp=0,inp2=*inp;
+    uint16_t ed=1;
+    outp =inp2 & ed;
+    for(uint8_t i=0;i<7;i++){
+    ed<<=1;
+    ed<<=1;
+    inp2<<=1;
+    outp|=inp2 & ed;
+    }
+    outp|=~(outp<<1) & 0xaaaa;
+    *outp_d++=outp & 0xff;
+    *outp_d  =outp >>8;
+}
+void manc_to_char(uint8_t * inp, uint8_t * outp_d){
+   uint16_t inp2,outp;
+            inp2=*inp++;
+           inp2|=(uint16_t)*inp<<8;
+    uint8_t ed=1;
+    outp =inp2 & ed;
+    for(uint8_t i=0;i<7;i++){
+        inp2>>=1;
+        ed<<=1;
+        outp|=inp2 & ed;
+    }
+    *outp_d=outp;
+}
+/*
+void manc_to_char(uint8_t * inp, uint8_t * outp_d){
+   uint16_t inp2,outp;
+            inp2=*inp++ & 0xff;
+           inp2|=(uint16_t)*inp<<8;
+    outp=((inp2 & (1<<14))>>7) |
+         ((inp2 & (1<<12))>>6) |
+         ((inp2 & (1<<10))>>5) |
+         ((inp2 & (1<<8 ))>>4) |
+         ((inp2 & (1<<6 ))>>3) |
+         ((inp2 & (1<<4 ))>>2) |
+         ((inp2 & (1<<2 ))>>1) |
+          (inp2 & 1);
+    *outp_d=outp & 0xff;
+}
+*/
 // Conversion from unsigned char ASCII base 16.
 //              to unsigned char BCD [0,1,2...,16]
 
@@ -348,8 +407,31 @@ static ssize_t _modbus_rtu_send(modbus_t *ctx, const uint8_t *req, int req_lengt
         ctx_rtu->set_rts(ctx, ctx_rtu->rts == MODBUS_RTU_RTS_UP);
         usleep(ctx_rtu->rts_delay);
 
+        int timeout;
+        if(ctx->manc){
+         uint8_t req2[256];
+         uint8_t *p_inp=req;
+         uint8_t *p_outp=req2;
+         int i;
+         for(i=0;i<req_length;i++){
+             char_to_manc(p_inp, p_outp);
+             p_inp++;
+             p_outp+=2;
+         }
+         if (ctx->debug) {
+             for (i = 0; i < req_length*2; i++)
+                 printf("%.2X", req2[i]);
+             printf("\n");
+         }
+         size = write(ctx->s, req2, req_length*2);
+         timeout=ctx_rtu->onebyte_time * req_length*2 + ctx_rtu->rts_delay;
+         size/=2;
+        }
+        else {
         size = write(ctx->s, req, req_length);
-        int timeout=ctx_rtu->onebyte_time * req_length + ctx_rtu->rts_delay;
+        timeout=ctx_rtu->onebyte_time * req_length + ctx_rtu->rts_delay;
+        }
+
         if(ctx->echo) timeout+=1500;
         usleep(timeout);
         ctx_rtu->set_rts(ctx, ctx_rtu->rts != MODBUS_RTU_RTS_UP);
@@ -457,7 +539,46 @@ static ssize_t _modbus_rtu_recv(modbus_t *ctx, uint8_t *rsp, int rsp_length)
 #if defined(_WIN32)
     return win32_ser_read(&((modbus_rtu_t *)ctx->backend_data)->w_ser, rsp, rsp_length);
 #else
-    return read(ctx->s, rsp, rsp_length);
+if(ctx->manc){
+    uint8_t *rsp0;
+    fd_set rset;
+    struct timeval tv;
+    struct timeval *p_tv;
+    int  rc=0,rc2=0;
+
+    rsp0=rsp;
+
+    rc=read(ctx->s, rsp, rsp_length);
+    //printf("rc=%d rsp_length=%d",rc,rsp_length);
+    if (rc< 0) return rc;
+    rsp+=rc;
+    //printf("rc=%d %2x ",rc,*rsp0);
+
+    if(rc%2) {
+    FD_ZERO(&rset);
+    FD_SET(ctx->s, &rset);
+    tv.tv_sec = ctx->response_timeout.tv_sec;
+    tv.tv_usec = ctx->response_timeout.tv_usec;
+    p_tv = &tv;
+    int rc_s = ctx->backend->select(ctx, &rset, p_tv,1);
+    //printf("rc_s=%d",rc_s);
+    if (rc_s< 0) return rc_s;
+
+    rc2=read(ctx->s, rsp, 1);
+    if (rc2< 0) return rc2;
+    //printf("rc2=%d %2x ",rc2,*rsp);
+    }
+    uint8_t *p_inp=rsp0;
+    uint8_t *p_outp=rsp0;
+    int nb=(rc+rc2)/2;
+    for(int i=0;i<nb;i++){
+        manc_to_char(p_inp, p_outp);
+        p_inp+=2;
+        p_outp++;
+    }
+    return nb;
+}
+else  return read(ctx->s, rsp, rsp_length);
 #endif
 }
 

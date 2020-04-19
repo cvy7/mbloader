@@ -202,6 +202,7 @@ static int send_msg(modbus_t *ctx, uint8_t *msg, int msg_length)
 
     if (rc > 0 && rc != msg_length) {
         errno = EMBBADDATA;
+        if (ctx->debug) printf("rc > 0 && rc != msg_length,rc=%d msg_length=%d /n",rc,msg_length);
         return -1;
     }
 
@@ -426,8 +427,9 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
             int i;
             for (i=0; i < rc; i++)
                 printf("<%.2X>", msg[msg_length + i]);
-        }
 
+        }
+        //printf("**rc=%d**", rc);
         /* Sums bytes received */
         msg_length += rc;
         /* Computes remaining bytes */
@@ -443,12 +445,14 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
                 step = _STEP_FUNCTION;
                 length_to_read = ctx->backend->header_length + 1;
                 msg_length=0;
+                //if(ctx->manc) length_to_read*=2;
                 break;
             case _STEP_FUNCTION:
                 /* Function code position */
                 length_to_read = compute_meta_length_after_function(
                     msg[ctx->backend->header_length],
                     msg_type);
+                //if(ctx->manc) length_to_read*=2;
                 if (length_to_read != 0) {
                     step = _STEP_META;
                     break;
@@ -458,9 +462,11 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
                     ctx, msg, msg_type);
                 if ((msg_length + length_to_read) > (int)ctx->backend->max_adu_length) {
                     errno = EMBBADDATA;
+                    if (ctx->debug) printf("too many data");
                     _error_print(ctx, "too many data");
                     return -1;
                 }
+                //if(ctx->manc) length_to_read*=2;
                 step = _STEP_DATA;
                 break;
             default:
@@ -576,6 +582,7 @@ static int check_confirmation(modbus_t *ctx, uint8_t *req,
                 _sleep_response_timeout(ctx);
                 modbus_flush(ctx);
             }
+            if (ctx->debug) printf("Check function code\n");
             errno = EMBBADDATA;
             return -1;
         }
@@ -628,6 +635,7 @@ static int check_confirmation(modbus_t *ctx, uint8_t *req,
             }
 
             errno = EMBBADDATA;
+            if (ctx->debug) printf("req_nb_value == rsp_nb_value");
             rc = -1;
         }
     } else {
@@ -1744,6 +1752,17 @@ int modbus_set_echo(modbus_t *ctx, int flag)
     }
 
     ctx->echo = flag;
+    return 0;
+}
+
+int modbus_set_manc(modbus_t *ctx, int flag)
+{
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->manc = flag;
     return 0;
 }
 

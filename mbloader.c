@@ -100,6 +100,9 @@ static int              mb_addr_boot= 100;
 static int              mb_areg=0;
 static int              mb_nreg=1;
 static int              rs232_echo=0;
+static int              rs485_manc=0;
+static int              mb_set_debug=0;
+static int              mb_stop_bits=1;
 
 /* variables for stopwatch */
 static clock_t  start  = 0;
@@ -799,10 +802,14 @@ void usage()
     printf("./mbloader [-d /dev/ttyS0] [-b 115200] [-m 11] [-a 100] -[p] file.hex\n");
     printf("-d    Device\n");
     printf("-b    Baudrate\n");
+    printf("-stop 2 stop bits\n");
     printf("-p    Program\n");
     printf("-a    mb addres of bootloader\n");
     printf("-m    mb_addres of main programm\n");
     printf("-echo  flush rs232 echo         \n");
+    printf("-manc  manchester coded 485 data\n");
+    printf("-debug  print debug  data\n");
+
     printf("Programm mk       : ./mbloader -d /dev/ttyS0 -b 115200 -a 102 -m 12 -p mk_su2.bin \n");
     printf("Programm mega88   : ./mbloader -d /dev/ttyS0 -b 115200 -a 102 -m 12 -p88 mk_su2.bin \n");
     printf("Programm fpga conf: ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -pfpga -vfpga output_file.rpd \n");
@@ -816,6 +823,8 @@ void usage()
     printf("Writing register  : ./mbloader -d /dev/ttyS1 -b 9600   -m 12 -areg 8193 -wreg1 1000 \n");
     printf("Wr regs from file : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 20 -wregf regs.bin  \n");
     printf("Reading coils     : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -rcoils \n");
+    printf("with manchester co: ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -manc -areg 0 -nreg 32 -rcoils \n");
+    printf("with echo flush   : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -echo -areg 0 -nreg 32 -rcoils \n");
     printf("Writing coils     : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -wcoils 1 0 1 1 1 \n");
     printf("Reading discs     : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 0 -nreg 32 -rdiscs \n");
     printf("Reading hmi_vars  : ./mbloader -d /dev/ttyS0 -b 115200 -m 12 -areg 200 -nreg 120 -rregf hmi_vars.bin  \n");
@@ -1130,15 +1139,16 @@ int prog_verify88 (
 
 int mb_open_master(char *device, int baud){
 
-    ctx = modbus_new_rtu(device, baud, 'N', 8, 2);
+    ctx = modbus_new_rtu(device, baud, 'N', 8, mb_stop_bits);
     if (ctx == NULL) {
         fprintf(stderr, "Unable to create the libmodbus context\n");
         return -1;
     }
 
 
-    modbus_set_debug(ctx,1);
+    modbus_set_debug(ctx,mb_set_debug);
     modbus_set_echo(ctx,rs232_echo);
+    modbus_set_manc(ctx,rs485_manc);
     modbus_rtu_set_rts(ctx,1);
     mb_mapping = modbus_mapping_new(/*BITS_ADDRESS + BITS_NB*/256,
                                     /*INPUT_BITS_ADDRESS + INPUT_BITS_NB*/256,
@@ -1154,13 +1164,17 @@ int mb_open_master(char *device, int baud){
     printf("MODBUS master started at\n");
     printf("Port           : %s\n", device);
     printf("Baudrate       : %d\n", baud);
+    printf("Stop bits      : %d\n", mb_stop_bits);
+    printf("Manchester codi: %d\n", rs485_manc);
+
+
 
     if (modbus_connect(ctx) == -1) {
         fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
         modbus_free(ctx);
         return -1;
     }
-    modbus_set_debug(ctx, TRUE);
+    modbus_set_debug(ctx, mb_set_debug);
 return 0;
 }
 
@@ -1326,7 +1340,7 @@ int prog_eeprom   (int            fd,
         printf("Size          : %ld Bytes\n", last_addr);
         printf("-------------------------------------------------\n");
         printf("Write eeprom ...\n");
-        rc=modbus_set_debug(ctx, TRUE);
+        rc=modbus_set_debug(ctx, mb_set_debug);
         if(rc < 0) return rc;
         for(adr=0; adr<last_addr ;adr+=256){
 
@@ -1355,7 +1369,7 @@ int prog_eeprom   (int            fd,
         printf("Verifing eeprom ...\n");
         // read the file
 
-    rc=modbus_set_debug(ctx, TRUE);
+    rc=modbus_set_debug(ctx, mb_set_debug);
     if(rc < 0) return rc;
     for(adr=0; adr<last_addr ;adr+=256){
 
@@ -1391,7 +1405,7 @@ int prog_eeprom   (int            fd,
                 return -1;
         }
 
-    rc=modbus_set_debug(ctx, TRUE);
+    rc=modbus_set_debug(ctx, mb_set_debug);
     if(rc < 0) return rc;
     for(adr=0; adr<EEP_END ;adr+=256){
 
@@ -1420,7 +1434,7 @@ int prog_eeprom   (int            fd,
                 return -1;
         }
 
-    rc=modbus_set_debug(ctx, TRUE);
+    rc=modbus_set_debug(ctx, mb_set_debug);
     if(rc < 0) return rc;
     for(adr=0; adr<RAM_END ;adr+=256){
 
@@ -1495,7 +1509,7 @@ if (mode & (PFPGA))
 
             printf("Erasing the config flash for 24c...\n");
             cmd[0]=VAR_BULK_ERASE;cmd[1]=0;
-            rc=modbus_set_debug(ctx, TRUE);
+            rc=modbus_set_debug(ctx,mb_set_debug);
             if(rc < 0) return rc;
             rc=mb_write_regs(VAR_COMMAND_REGISTER, 2, cmd);
             if(rc < 0) return rc;
@@ -1564,7 +1578,7 @@ else data=data1;
     printf("Verifing conf. flash ...\n");
     // read the file
 
-rc=modbus_set_debug(ctx, TRUE);
+rc=modbus_set_debug(ctx, mb_set_debug);
 if(rc < 0) return rc;
 for(cmd[1]=0; cmd[1]<NPAGES; cmd[1]++){
     cmd[0]=VAR_PAGE_READ;
@@ -1608,7 +1622,7 @@ if(mode & (RFPGA)) {
             return -1;
     }
 
-rc=modbus_set_debug(ctx, TRUE);
+rc=modbus_set_debug(ctx, mb_set_debug);
 if(rc < 0) return rc;
 for(cmd[1]=0; cmd[1]<NPAGES; cmd[1]++){
     cmd[0]=VAR_PAGE_READ;
@@ -1887,11 +1901,25 @@ int main(int argc, char *argv[])
             if (i < argc)
                 mb_addr_boot = atoi(argv[i]);
         }
-        else if (strcmp (argv[i], "-echo") == 0)
+        else if (strcmp (argv[i], "-stop") == 0)
         {
             i++;
             if (i < argc)
+                mb_stop_bits = atoi(argv[i]);
+                if(mb_stop_bits>2) mb_stop_bits=2;
+                if(mb_stop_bits<1) mb_stop_bits=1;
+        }
+        else if (strcmp (argv[i], "-echo") == 0)
+        {
                 rs232_echo=1;
+        }
+        else if (strcmp (argv[i], "-debug") == 0)
+        {
+                mb_set_debug=1;
+        }
+        else if (strcmp (argv[i], "-manc") == 0)
+        {
+                rs485_manc=1;
         }
         else if (strcmp (argv[i], "-nreg") == 0)
         {
